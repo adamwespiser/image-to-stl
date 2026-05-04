@@ -1,11 +1,8 @@
 import numpy as np
 from functools import lru_cache
-from Models import LayerType, IntensityChannels, LuminanceConfig, StlConfig, FilamentProperties
+from Models import Filament, LayerType, IntensityChannels, LuminanceConfig, StlConfig
 from ImageAnalyzer import ImageAnalyzer
-from dataclasses import dataclass
 from typing import Dict, Tuple
-from pydantic import BaseModel, Field
-from scipy.ndimage import gaussian_filter
 from scipy.optimize import minimize
 
 
@@ -30,7 +27,7 @@ def hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
 
 def calculate_color_thicknesses(
     target_rgb: np.ndarray,
-    filaments: Dict[LayerType, FilamentProperties],
+    filaments: Dict[LayerType, Filament],
     luminance_config: LuminanceConfig,
     beer_lamport: bool = False,
     true_color: bool = True,
@@ -78,13 +75,9 @@ def calculate_color_thicknesses_cached(
     Returns (cyan, magenta, yellow, black) thicknesses.
     """
     # Convert RGB [0-255] to [0-1] scale
-    target_rgb = np.array([target_r, target_g, target_b])
+    target_rgb = np.array([target_r, target_g, target_b], dtype=float)
     rgb = target_rgb / 255.0
-
-    if len(rgb.shape) > 1:  # Only apply if we're processing multiple pixels
-        sigma = 3.0  # Adjust this value to control smoothing strength (higher = more smooth)
-        rgb = gaussian_filter(rgb, sigma=sigma, mode='reflect')
-
+    epsilon = 1e-5  # Prevent log(0)
 
     if true_color:
         cyan_rgb = np.array(hex_to_rgb(c_filament_hex)) / 255.0
@@ -114,40 +107,63 @@ def calculate_color_thicknesses_cached(
             
             return achieved * 255.0
         
-        def objective(cmyk_amounts):
+        def color_error(cmyk_amounts):
             # Split into CMY and K components
             cmy_amounts = cmyk_amounts[:3]
             k_amount = cmyk_amounts[3]
             
             achieved = calculate_achieved_rgb(cmy_amounts, k_amount)
             
-            # Color matching error (primary objective)
-            color_error = np.mean(((achieved - target_rgb) / 255.0) ** 2)
-            
-            # Modified regularization terms
-            cmy_penalty = 0.001 * np.sum(cmy_amounts)  # Reduced penalty for colored filaments (was 0.01)
-            k_penalty = 0.1 * k_amount  # Penalize use of K instead of encouraging it
-            saturation_bonus = -0.05 * np.std(cmy_amounts)  # Encourage color variation
-            
-            return color_error + cmy_penalty + k_penalty + saturation_bonus
+            return np.mean(((achieved - target_rgb) / 255.0) ** 2)
         
         # Update bounds to include K
         bounds = [(0, 1) for _ in range(4)]  # Now CMYK instead of just CMY
-        
-        # Initial guess including K
-        x0 = np.array([0.5, 0.5, 0.5, 0.5])
-        
-        result = minimize(
-            objective,
-            x0,
-            method='L-BFGS-B',
-            bounds=bounds,
-            options={
-                'ftol': 1e-6,
-                'maxiter': 100
-            }
-        )
-        
+
+        # Use a few deterministic starts to reduce local-minimum and tie issues.
+        k0 = 1 - np.max(rgb)
+        denom = 1 - k0 + epsilon
+        c0 = (1 - rgb[0] - k0) / denom
+        m0 = (1 - rgb[1] - k0) / denom
+        y0 = (1 - rgb[2] - k0) / denom
+        initial_guesses = [
+            np.clip(np.array([c0, m0, y0, k0]), 0, 1),
+            np.array([0.5, 0.5, 0.5, 0.5]),
+            np.array([0.0, 0.0, 0.0, k0]),
+            np.array([0.0, 0.0, 0.0, 0.0]),
+            np.array([1.0, 1.0, 1.0, 0.0]),
+        ]
+
+        results = [
+            minimize(
+                color_error,
+                x0,
+                method='L-BFGS-B',
+                bounds=bounds,
+                options={
+                    'ftol': 1e-10,
+                    'maxiter': 300
+                }
+            )
+            for x0 in initial_guesses
+        ]
+
+        best_color_error = min(color_error(result.x) for result in results)
+        best_results = [
+            result for result in results
+            if color_error(result.x) <= best_color_error + 1e-10
+        ]
+
+        def total_printed_thickness(cmyk_amounts):
+            c, m, y, k = cmyk_amounts
+            return (
+                c * cym_target_thickness * c_filament_td
+                + m * cym_target_thickness * m_filament_td
+                + y * cym_target_thickness * y_filament_td
+                + k * white_target_thickness * k_filament_td
+            )
+
+        result = min(best_results, key=lambda candidate: total_printed_thickness(candidate.x))
+
         # Extract results
         cmy_thicknesses = result.x[:3]
         k_thickness = result.x[3]
@@ -155,7 +171,7 @@ def calculate_color_thicknesses_cached(
         # Debug prints
         print("Target RGB:", rgb * 255.0)
         print("Achieved RGB:", calculate_achieved_rgb(cmy_thicknesses, k_thickness))
-        print("Error:", result.fun)
+        print("Error:", color_error(result.x))
         print("Solution:", cmy_thicknesses)
         
         c = cmy_thicknesses[0]
@@ -163,7 +179,6 @@ def calculate_color_thicknesses_cached(
         y = cmy_thicknesses[2]
         k = k_thickness
     else:
-        epsilon = 1e-5  # Prevent log(0)
         # Convert RGB to CMYK
         k = 1 - np.max(rgb)
         c = (1 - rgb[0] - k) / (1 - k + epsilon)  # Add small epsilon to prevent division by zero
@@ -194,13 +209,6 @@ def calculate_color_thicknesses_cached(
         yellow_thickness = y * cym_target_thickness * y_filament_td
         white_thickness = k * white_target_thickness * k_filament_td
     
-    # Apply K (black) component to all layers
-    darkness_boost = k * 0.3  # Adjust factor as needed
-    cyan_thickness *= (1.0 + darkness_boost)
-    magenta_thickness *= (1.0 + darkness_boost)
-    yellow_thickness *= (1.0 + darkness_boost)
-    white_thickness *= (1.0 + darkness_boost)
-    
     # Clip to physical constraints
     cyan_thickness = np.clip(cyan_thickness, 0, c_filament_td)
     magenta_thickness = np.clip(magenta_thickness, 0, m_filament_td)
@@ -209,45 +217,13 @@ def calculate_color_thicknesses_cached(
     
     return cyan_thickness, magenta_thickness, yellow_thickness, white_thickness
 
-def calculate_white_thickness(
-    target_rgb: np.ndarray,
-    filaments: Dict[LayerType, FilamentProperties],
-    luminance_config: LuminanceConfig
-) -> float:
-    """Calculate white layer thickness based on luminance"""
-    # Calculate perceived brightness
-    brightness = (0.299 * target_rgb[0] + 
-                 0.587 * target_rgb[1] + 
-                 0.114 * target_rgb[2]) / 255.0
-    
-    # Calculate saturation
-    max_rgb = np.max(target_rgb)
-    min_rgb = np.min(target_rgb)
-    saturation = (max_rgb - min_rgb) / (max_rgb + 1e-10)
-    
-    # Get white filament properties
-    f_white = filaments[LayerType.WHITE]
-    max_white_thickness = f_white.transmission_distance * (1 - luminance_config.target_max_luminance)
-    
-    # Calculate white thickness
-    white_thickness = ((1.0 - brightness) * 
-                      (1.0 - saturation * 0.8) *  # Reduce white more in saturated areas
-                      max_white_thickness)
-    
-    # Add extra white for very dark colors
-    if brightness < 0.2:
-        white_thickness *= 1.5  # Boost dark areas
-    
-    return np.clip(white_thickness, 0, max_white_thickness)
-
 def calculate_exact_thicknesses(
     target_rgb: np.ndarray,
-    filaments: Dict[LayerType, FilamentProperties],
+    filaments: Dict[LayerType, Filament],
     luminance_config: LuminanceConfig
 ) -> Tuple[float, float, float, float]:
     """Calculate all layer thicknesses"""
     c, m, y, k = calculate_color_thicknesses(target_rgb, filaments, luminance_config)
-    #w = calculate_white_thickness(target_rgb, filaments, luminance_config)
     return c, m, y, k
 
 def extract_and_invert_channels(img: ImageAnalyzer, config: StlConfig) -> IntensityChannels:

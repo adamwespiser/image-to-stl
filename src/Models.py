@@ -2,7 +2,7 @@ from dataclasses import dataclass
 import numpy as np
 from stl.mesh import Mesh
 from typing import Dict, Tuple
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from enum import Enum
 import os
 
@@ -33,7 +33,17 @@ class Filament(BaseModel):
     filament_type: str
     color_name: str
     hex_value: str
-    transmission_distance: int
+    transmission_distance: float
+    label: list[str] = Field(default_factory=list)
+
+    @field_validator("label", mode="before")
+    @classmethod
+    def normalize_label(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value]
+        return value
 
 @dataclass
 class FilamentProperties:
@@ -66,6 +76,7 @@ class StlConfig(BaseModel):
     color_correction: ColorCorrection = Field(default=ColorCorrection.LINEAR, description="Color correction method")
     luminance_config: LuminanceConfig = Field(default_factory=LuminanceConfig)
     filament_library: Dict[LayerType, Filament] = Field(default_factory=lambda: {})
+    include_clear_filler: bool = Field(default=True, description="Whether to add a clear filler layer before the white intensity layer")
 
 class StlCollection(BaseModel):
     meshes: Dict[str, Mesh]

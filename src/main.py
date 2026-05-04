@@ -4,7 +4,6 @@ from ImageAnalyzer import ImageAnalyzer
 from Models import ColorCorrection, LuminanceConfig
 from filaments import FilamentLibrary
 from to_stl import LayerType, to_stl_cym, StlConfig
-from color_mixing import hex_to_rgb
 import os
 import cv2
 import argparse
@@ -26,7 +25,11 @@ parser.add_argument('--resolution', '-r', type=float, default=0.4,
 parser.add_argument('--stl-output', default='stl-output',
                    help='Output directory for STL files')
 parser.add_argument('--face-up', action='store_true', default=False,
-                   help='Whether to generate STLs face down (default: True)')
+                   help='Mirror STLs for face-up viewing')
+parser.add_argument('--no-clear', action='store_true', default=False,
+                   help='Skip the clear filler layer to reduce total thickness')
+parser.add_argument('--filament-label', default=None,
+                   help='Select a complete CMYK filament set from filaments.yaml by label')
 parser.add_argument('--cym-target-thickness', type=float, default=0.07,
                    help='Target thickness of the cyan layer in mm')
 parser.add_argument('--white-target-thickness', type=float, default=0.16,
@@ -66,6 +69,12 @@ print(f"Final dimensions will be {desired_width_mm}mm x {physical_height_mm:.1f}
 # Usage example
 yaml_path = Path("filaments.yaml")
 library = FilamentLibrary.from_yaml(yaml_path)
+filament_library = library.get_filament_set(args.filament_label) if args.filament_label else {
+    LayerType.CYAN: library.get_filament("bambu_cyan_pla"),     # RGB for Cyan
+    LayerType.YELLOW: library.get_filament("bambu_yellow_pla"),   # RGB for Yellow
+    LayerType.MAGENTA: library.get_filament("bambu_magenta_pla"),  # RGB for Magenta
+    LayerType.WHITE: library.get_filament("bambu_white_pla"),      # RGB for White
+}
 
 
 img.pixelate(block_size)
@@ -93,12 +102,8 @@ stl_config = StlConfig(
         white_target_thickness=args.white_target_thickness,
     ),
     color_correction=ColorCorrection.LUMINANCE,
-    filament_library={
-        LayerType.CYAN: library.get_filament("bambu_cyan_pla"),     # RGB for Cyan
-        LayerType.YELLOW: library.get_filament("bambu_yellow_pla"),   # RGB for Yellow
-        LayerType.MAGENTA: library.get_filament("bambu_magenta_pla"),  # RGB for Magenta
-        LayerType.WHITE: library.get_filament("bambu_white_pla"),      # RGB for White
-    }
+    include_clear_filler=not args.no_clear,
+    filament_library=filament_library
 )
 print(f"\nSTL Configuration:\n{stl_config.model_dump_json(indent=2)}")
 

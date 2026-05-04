@@ -1,4 +1,6 @@
 bambu_white_pla:
+  label:
+    - bambu
   manufacturer: bambu
   filament_type: pla
   color_name: white
@@ -6,6 +8,8 @@ bambu_white_pla:
   transmission_distance: 5.0
 
 bambu_cyan_pla:
+  label:
+    - bambu
   manufacturer: bambu
   filament_type: pla
   color_name: cyan 
@@ -13,6 +17,8 @@ bambu_cyan_pla:
   transmission_distance: 8.0
 
 bambu_yellow_pla:
+  label:
+    - bambu
   manufacturer: bambu
   filament_type: pla
   color_name: yellow
@@ -20,8 +26,82 @@ bambu_yellow_pla:
   transmission_distance: 6.0
 
 bambu_magenta_pla:
+  label:
+    - bambu
   manufacturer: bambu
   filament_type: pla
   color_name: magenta
   hex_value: "#EC008C"
   transmission_distance: 4.0
+
+sunlu_white_pla:
+  label:
+    - sunlu
+  manufacturer: sunlu
+  filament_type: pla
+  color_name: white
+  hex_value: "#FFFFFF"
+  transmission_distance: 4.2
+
+sunlu_cyan_pla:
+  label:
+    - sunlu
+  manufacturer: sunlu
+  filament_type: pla
+  color_name: cyan 
+  hex_value: "#2AE9F2"
+  transmission_distance: 1.5
+
+sunlu_yellow_pla:
+  label:
+    - sunlu
+  manufacturer: sunlu
+  filament_type: pla
+  color_name: yellow
+  hex_value: "#FFFF9E"
+  transmission_distance: 4.2
+
+sunlu_magenta_pla:
+  label:
+    - sunlu
+  manufacturer: sunlu
+  filament_type: pla
+  color_name: magenta
+  hex_value: "#FF4595"
+  transmission_distance: 2.3
+
+epax_white_pla:
+  label:
+    - epax
+  manufacturer: epax
+  filament_type: pla
+  color_name: white
+  hex_value: "#FFFFFF"
+  transmission_distance: 6.4
+
+epax_cyan_pla:
+  label:
+    - epax
+  manufacturer: epax
+  filament_type: pla
+  color_name: cyan 
+  hex_value: "#2Cbfff"
+  transmission_distance: 2.2
+
+epax_yellow_pla:
+  label:
+    - epax
+  manufacturer: epax
+  filament_type: pla
+  color_name: yellow
+  hex_value: "#FFFF97"
+  transmission_distance: 6.4
+
+epax_magenta_pla:
+  label:
+    - epax
+  manufacturer: epax
+  filament_type: pla
+  color_name: magenta
+  hex_value: "#FC3F91"
+  transmission_distance: 3.5

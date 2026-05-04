@@ -5,6 +5,47 @@ from typing import Tuple
 from Models import ColorCorrection, LayerType, StlConfig, StlCollection
 from color_mixing import extract_and_invert_channels, extract_and_invert_channels_linear
 
+def _merged_height_rectangles(previous_heights: np.ndarray,
+                              next_heights: np.ndarray) -> list[Tuple[int, int, int, int, float, float]]:
+    """Merge adjacent cells that share identical bottom and top heights."""
+    y_pixels, x_pixels = previous_heights.shape
+    used = np.zeros((y_pixels, x_pixels), dtype=bool)
+    rectangles = []
+
+    for y in range(y_pixels):
+        for x in range(x_pixels):
+            if used[y, x]:
+                continue
+
+            bottom = previous_heights[y, x]
+            top = next_heights[y, x]
+
+            width = 1
+            while (
+                x + width < x_pixels
+                and not used[y, x + width]
+                and np.isclose(previous_heights[y, x + width], bottom)
+                and np.isclose(next_heights[y, x + width], top)
+            ):
+                width += 1
+
+            height = 1
+            while y + height < y_pixels:
+                row_slice = slice(x, x + width)
+                row_matches = (
+                    ~used[y + height, row_slice]
+                    & np.isclose(previous_heights[y + height, row_slice], bottom)
+                    & np.isclose(next_heights[y + height, row_slice], top)
+                )
+                if not np.all(row_matches):
+                    break
+                height += 1
+
+            used[y:y + height, x:x + width] = True
+            rectangles.append((x, y, width, height, float(bottom), float(top)))
+
+    return rectangles
+
 def create_layer_mesh(height_map: np.ndarray,
                      height_step_mm: float,
                      pixel_size: float,
@@ -29,34 +70,35 @@ def create_layer_mesh(height_map: np.ndarray,
     
     next_heights = z + previous_heights
     
-    x_coords, y_coords = np.meshgrid(np.arange(x_pixels), np.arange(y_pixels))
+    rectangles = _merged_height_rectangles(previous_heights, next_heights)
+    vertices = np.zeros((len(rectangles), 8, 3))
+
+    for i, (x, y, width, height, bottom, top) in enumerate(rectangles):
+        x_min = x * pixel_size
+        x_max = (x + width) * pixel_size
+        y_min = y * pixel_size
+        y_max = (y + height) * pixel_size
+
+        vertices[i] = np.array([
+            [x_min, y_min, bottom],
+            [x_max, y_min, bottom],
+            [x_max, y_max, bottom],
+            [x_min, y_max, bottom],
+            [x_min, y_min, top],
+            [x_max, y_min, top],
+            [x_max, y_max, top],
+            [x_min, y_max, top],
+        ])
     
-    vertices = np.zeros((y_pixels, x_pixels, 8, 3))
-    
-    # Bottom vertices
-    vertices[:, :, 0] = np.stack([x_coords * pixel_size, y_coords * pixel_size, previous_heights], axis=-1)
-    vertices[:, :, 1] = np.stack([(x_coords + 1) * pixel_size, y_coords * pixel_size, previous_heights], axis=-1)
-    vertices[:, :, 2] = np.stack([(x_coords + 1) * pixel_size, (y_coords + 1) * pixel_size, previous_heights], axis=-1)
-    vertices[:, :, 3] = np.stack([x_coords * pixel_size, (y_coords + 1) * pixel_size, previous_heights], axis=-1)
-    
-    # Top vertices
-    vertices[:, :, 4] = np.stack([x_coords * pixel_size, y_coords * pixel_size, next_heights], axis=-1)
-    vertices[:, :, 5] = np.stack([(x_coords + 1) * pixel_size, y_coords * pixel_size, next_heights], axis=-1)
-    vertices[:, :, 6] = np.stack([(x_coords + 1) * pixel_size, (y_coords + 1) * pixel_size, next_heights], axis=-1)
-    vertices[:, :, 7] = np.stack([x_coords * pixel_size, (y_coords + 1) * pixel_size, next_heights], axis=-1)
-    
-    # Mirror the x coordinates if not face_down
+    # Mirror the x coordinates for face-up viewing.
     if face_up:
         # Calculate the total width of the model
         total_width = x_pixels * pixel_size
         # Mirror x coordinates by subtracting from total width
-        vertices[:, :, :, 0] = total_width - vertices[:, :, :, 0]
+        vertices[:, :, 0] = total_width - vertices[:, :, 0]
 
     vertices = vertices.reshape(-1, 3)
     
-    # Faces
-    pixel_indices = np.arange(y_pixels * x_pixels * 8).reshape(y_pixels, x_pixels, 8)
-    base_indices = pixel_indices[:, :, 0].reshape(-1)
     face_template = np.array([
         [0, 2, 1], [0, 3, 2],  # bottom
         [4, 5, 6], [4, 6, 7],  # top
@@ -66,8 +108,8 @@ def create_layer_mesh(height_map: np.ndarray,
         [1, 2, 6], [1, 6, 5]   # right
     ])
     
-    # Create offset array for each pixel
-    offsets = np.arange(0, len(base_indices) * 8, 8)[:, None, None]
+    # Create offset array for each merged prism
+    offsets = np.arange(0, len(rectangles) * 8, 8)[:, None, None]
     
     # Broadcasting to create all faces at once
     faces = (face_template[None, :, :] + offsets).reshape(-1, 3)
@@ -146,9 +188,13 @@ def to_stl_cym(img: ImageAnalyzer, config: StlConfig = None) -> StlCollection:
         'cyan_mesh': (intensity_channels.c_channel, base_heights, LayerType.CYAN),
         'yellow_mesh': (intensity_channels.y_channel, None, LayerType.YELLOW),
         'magenta_mesh': (intensity_channels.m_channel, None, LayerType.MAGENTA),
-        'clear_mesh': (intensity_channels.intensity_map, None, LayerType.CLEAR),
         'white_intensity_mesh': (intensity_channels.intensity_map, None, LayerType.WHITE)
     }
+
+    if config.include_clear_filler:
+        layer_items = list(layers.items())
+        layer_items.insert(3, ('clear_mesh', (intensity_channels.intensity_map, None, LayerType.CLEAR)))
+        layers = dict(layer_items)
     
     previous_heights = base_heights
     meshes = {'white_base_mesh': base_mesh}
