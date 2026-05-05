@@ -105,3 +105,21 @@ epax_magenta_pla:
   color_name: magenta
   hex_value: "#FC3F91"
   transmission_distance: 3.5
+
+polymaker_white_pla:
+  label:
+    - polymaker
+  manufacturer: polymaker
+  filament_type: pla
+  color_name: white 
+  hex_value: "#FFFFFF"
+  transmission_distance: 21.3
+
+polymaker_cyan_pla:
+  label:
+    - polymaker
+  manufacturer: polymaker
+  filament_type: pla
+  color_name: cyan
+  hex_value: "#1BBBCA"
+  transmission_distance: 5.3
